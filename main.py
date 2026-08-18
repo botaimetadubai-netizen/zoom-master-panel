@@ -4,21 +4,31 @@ import os
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 import socketio
+from pydantic import BaseModel
+from typing import List, Optional
 
-# ---------- Socket.IO Server Setup ----------
+# ---------- Request Model ----------
+class StartBotsRequest(BaseModel):
+    meeting_code: str
+    count: int
+    passcode: Optional[str] = ""
+    duration: Optional[int] = 2
+    custom_names: Optional[List[str]] = []
+
+# ---------- Socket.IO Server ----------
 sio = socketio.AsyncServer(
     async_mode='asgi',
     cors_allowed_origins='*'
 )
 
 fastapi_app = FastAPI()
-app = socketio.ASGIApp(sio, fastapi_app)  # यह ASGI app uvicorn चलाएगा
+app = socketio.ASGIApp(sio, fastapi_app)  # <-- this is the ASGI app for uvicorn
 
 # ---------- Global State ----------
 connected_workers = 0
 active_bots_count = 0
 
-# ---------- Socket Events (Worker से बात) ----------
+# ---------- Socket Events ----------
 @sio.event
 async def connect(sid, environ):
     global connected_workers
@@ -48,7 +58,7 @@ async def on_status_update(sid, data):
     global active_bots_count
     active_bots_count = data.get('active_bots', 0)
 
-# ---------- FastAPI Routes (Web UI) ----------
+# ---------- FastAPI Routes ----------
 @fastapi_app.get("/", response_class=HTMLResponse)
 async def home():
     return """
@@ -153,22 +163,22 @@ async def home():
     """
 
 @fastapi_app.post("/start")
-async def start_bots(meeting_code: str, count: int, passcode: str = "", duration: int = 2, custom_names: list = []):
+async def start_bots(req: StartBotsRequest):
     global connected_workers
     if connected_workers == 0:
         raise HTTPException(503, "No Worker connected! Please run the Colab script first.")
-    if count > 100:
+    if req.count > 100:
         raise HTTPException(400, "Max 100 bots allowed.")
     
-    # Socket.IO se Worker ko command bhejo
+    # Emit to Worker via Socket.IO
     await sio.emit('start_bots', {
-        'meeting_code': meeting_code,
-        'passcode': passcode,
-        'count': count,
-        'duration': duration,
-        'custom_names': custom_names
+        'meeting_code': req.meeting_code,
+        'passcode': req.passcode,
+        'count': req.count,
+        'duration': req.duration,
+        'custom_names': req.custom_names
     })
-    return {"message": f"Command sent! Starting {count} bots."}
+    return {"message": f"Command sent! Starting {req.count} bots."}
 
 @fastapi_app.post("/stop")
 async def stop_bots():
